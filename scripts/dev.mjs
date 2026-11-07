@@ -2,22 +2,33 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { existsSync, mkdirSync, openSync, closeSync } from 'node:fs';
 const root = process.cwd();
-if (!existsSync('.venv/bin/python'))
-  throw new Error('Run pnpm setup:dev first');
+const isWin = process.platform === 'win32';
+const pythonCandidates = [
+  process.env.INFERENCE_PYTHON,
+  '.venv/Scripts/python.exe',
+  '.venv/bin/python',
+  isWin ? 'python' : 'python3',
+].filter(Boolean);
+
+const pythonBin =
+  pythonCandidates.find((p) => p === 'python' || p === 'python3' || existsSync(p)) ||
+  'python';
+
 mkdirSync('.runtime/logs', { recursive: true });
 const children = [];
 function start(name, cmd, args, cwd = root) {
   const log = openSync(`.runtime/logs/${name}.log`, 'a');
-  const child = spawn(cmd, args, {
+  const actualCmd = isWin && cmd === 'pnpm' ? 'pnpm.cmd' : cmd;
+  const child = spawn(actualCmd, args, {
     cwd,
     env: {
       ...process.env,
       NEXT_TELEMETRY_DISABLED: '1',
       STORAGE_DIR: path.resolve(process.env.STORAGE_DIR || '.runtime/uploads'),
-      FIXTURE_DIR: path.resolve('services/inference/fixtures'),
     },
     stdio: ['ignore', log, log],
-    detached: true,
+    detached: !isWin,
+    shell: isWin,
   });
   closeSync(log);
   children.push(child);
@@ -28,7 +39,11 @@ function start(name, cmd, args, cwd = root) {
 }
 function signalGroup(child, signal) {
   try {
-    process.kill(-child.pid, signal);
+    if (isWin) {
+      if (child.pid) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F']);
+    } else {
+      process.kill(-child.pid, signal);
+    }
   } catch (e) {
     if (e.code !== 'ESRCH') throw e;
   }
@@ -45,7 +60,7 @@ function stop(code = 0) {
 }
 start(
   'inference',
-  path.resolve(process.env.INFERENCE_PYTHON || '.venv/bin/python'),
+  pythonBin === 'python' || pythonBin === 'python3' ? pythonBin : path.resolve(pythonBin),
   ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8001'],
   path.join(root, 'services/inference'),
 );
@@ -53,7 +68,7 @@ start('api', 'pnpm', ['--filter', '@safesight/api', 'dev']);
 start('web', 'pnpm', ['--filter', '@safesight/web', 'dev']);
 start('proxy', 'node', ['scripts/proxy.mjs']);
 console.log(
-  'SafeSight starting at http://localhost:8080 · logs: .runtime/logs/ · credentials: .runtime/dev-credentials.json',
+  'SafeSight starting at http://localhost:8080 · logs: .runtime/logs/',
 );
 process.on('SIGINT', () => stop());
 process.on('SIGTERM', () => stop());

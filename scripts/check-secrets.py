@@ -4,8 +4,9 @@ import json
 secrets=[]
 for line in Path('.env').read_text().splitlines():
     key,sep,value=line.partition('=')
-    if sep and key in ['INFERENCE_KEY','POSTGRES_PASSWORD','CLOUDINARY_API_KEY','CLOUDINARY_API_SECRET'] and value:secrets.append(value)
-secrets.extend(json.loads(Path('.runtime/dev-credentials.json').read_text()).values())
+    if sep and key in ['INFERENCE_KEY','GEMINI_API_KEY','OPENAI_API_KEY','POSTGRES_PASSWORD','CLOUDINARY_API_KEY','CLOUDINARY_API_SECRET'] and value:secrets.append(value)
+legacy_credentials = Path('.runtime/dev-credentials.json')
+if legacy_credentials.exists(): secrets.extend(json.loads(legacy_credentials.read_text()).values())
 files=list(Path('apps/web/.next-production').rglob('*.js'))+list(Path('.runtime/logs').glob('*.log'))
 failed=[]
 for file in files:

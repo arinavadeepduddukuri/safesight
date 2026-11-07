@@ -1,39 +1,29 @@
-# REST API v1
+# API
 
-Application base `/api` through the same-origin proxy. Live generated OpenAPI: `/api/openapi.json`; Swagger UI: `/api/docs`. Shared request schemas and result types: `packages/contracts/src/index.ts`. API version 1 is returned by health and the contract package.
+Use `/api` through the same-origin proxy. OpenAPI: `/api/docs`. `GET /auth/me` creates or returns an anonymous session. Mutations require its cookie, same Origin and X-CSRF-Token. There is no login or role API.
 
-Every authenticated route uses an HttpOnly cookie. GET `/auth/me` returns the session's CSRF value. Mutations must include `Origin` equal to the app origin and `X-CSRF-Token`; login and guest exchange require the same Origin without an existing CSRF token. Cookies are never provided in URL parameters. Unauthorized requests return 401, role/scope/CSRF denial 403, invalid input 400, invalid state 409 and unavailable adapters 503. Errors use `{error:{status,message}}`; unexpected internal details are kept in server logs.
+| Endpoint                        | Purpose                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------ |
+| GET /health                     | Database availability and nonsecret inference configuration                          |
+| GET /auth/me                    | Workspace, preferences and CSRF token                                                |
+| GET /workspace                  | Default inspection location identifier and vision status                             |
+| GET /events                     | Session-validated SSE changes and heartbeats                                         |
+| GET /inspections                | History: page, limit (1–100), status, search, optional zoneId                        |
+| POST /inspections               | Multipart image, zoneId, optional requiredEquipment JSON string and operationContext |
+| GET /inspections/:id            | Immutable analysis and review history                                                |
+| GET /inspections/:id/image      | Private normalized PNG                                                               |
+| DELETE /inspections/:id/image   | Remove finished photo, retaining evidence                                            |
+| POST /inspections/:id/retry     | Failed job retry, fewer than three attempts                                          |
+| POST /inspections/:id/reanalyze | Independent copied image and new job                                                 |
+| POST /inspections/:id/reviews   | Append findings and required 3–2000 character note                                   |
+| GET /settings                   | Preferences, storage adapter and inference status                                    |
+| PATCH /settings                 | Name and IANA time zone                                                              |
+| GET /exports/inspections        | CSV: range=1h/24h/7d, optional zoneId, maximum 10,000 rows                           |
 
-| Method       | Route                       | Behavior / access                                                                                    |
-| ------------ | --------------------------- | ---------------------------------------------------------------------------------------------------- | --- | -------------------------------------------------- |
-| GET          | `/health`                   | Database health, inference readiness/mode; public                                                    |
-| POST         | `/auth/login`               | `{email,password}`; rate limited; sets cookie                                                        |
-| GET / POST   | `/auth/me`, `/auth/logout`  | Current permitted scope / revoke current session                                                     |
-| GET          | `/dashboard`                | Authoritative facility snapshot, freshness, incidents, recent inspections, review denominator        |
-| GET          | `/facilities/:id/dashboard` | Explicit membership check; cross-facility denied                                                     |
-| GET          | `/events`                   | Authorized SSE ready/change/heartbeat; expires and revokes during connection                         |
-| GET          | `/readings`                 | `zoneId`, `range=1h                                                                                  | 24h | 7d`, `page`, `limit` (≤100); raw persisted history |
-| GET          | `/history`                  | `zoneId`, `range`; downsampled aggregates with source/scale and bucket size                          |
-| GET / PATCH  | `/rules`, `/rules/:id`      | Staff reads; Admin updates metric/threshold/consecutive/hysteresis/recoveryReadings/severity/enabled |
-| PATCH        | `/zones/:id/ppe`            | Admin sets helmetRequired, vestRequired, alertsEnabled; original evidence retained                   |
-| POST         | `/simulation`               | Admin; `{zoneId,scenario,running}`; normal/temperature/aqi/recovery/interrupted                      |
-| POST         | `/simulation/reset`         | Development Admin only; `{confirmation:"RESET DEMO"}`; scoped destructive action                     |
-| GET / POST   | `/inspections`              | Paginated status/zone filter; staff reads, Admin/Officer upload multipart zoneId + image             |
-| GET          | `/inspections/:id`          | Scoped detail, immutable inference result, append-only review history                                |
-| GET / DELETE | `/inspections/:id/image`    | Private authorized delivery; Admin/Officer deletion after job finishes                               |
-| POST         | `/inspections/:id/retry`    | Failed job only, retained image, <3 total attempts                                                   |
-| POST         | `/inspections/:id/reviews`  | Admin/Officer; exact original person references, helmet/vest state and required note                 |
-| GET          | `/alerts`                   | Paginated status/zone filter; condition and incident state separate                                  |
-| GET          | `/alerts/:id`               | Scoped evidence and action audit                                                                     |
-| POST         | `/alerts/:id/actions`       | Admin/Officer; acknowledge/resolve/note, required note, explicit override when condition active      |
-| GET / PATCH  | `/settings`                 | Staff reads non-secret settings; Admin changes facility name and IANA timezone                       |
-| GET          | `/qr`                       | Staff, optional zoneId; actual QR data URL and configured staff page payload; rejects localhost      |
-| GET          | `/samples/:name`            | Staff, equipped/review original DEMO schematics only                                                 |
-| GET          | `/exports/:kind`            | Staff; readings/inspections/incidents CSV with same zone/time filters; ≤10,000 rows                  |
-| GET / POST   | `/shares`                   | Admin lists metadata or creates scoped link; token returned once in URL fragment                     |
-| DELETE       | `/shares/:id`               | Admin revokes link and invalidates existing guest live connections                                   |
-| POST         | `/shares/exchange`          | Same-origin `{token}`; validate hash/scope/expiry/revocation and create scoped cookie                |
+Uploads: one image/request, 8 MB, 20 MP, minimum 32 × 32, JPEG/PNG/WebP magic bytes, no animation. Batch files use independent requests. Required checklist: up to 20 unique names, 100 characters each. An empty array requests inventory only. Optional operationContext: trimmed text up to 1000 characters, saved in requirements and copied on reanalysis. Legacy helmetRequired/vestRequired request fields remain compatible.
 
-Review states: detected, potential_missing, unknown. In a submitted human review, potential_missing confirms a snapshot violation; unknown never implies compliance. Original DEMO/REAL result remains unchanged. Boxes are normalized-image xyxy pixel coordinates; every result records source dimensions, person references, classes, scores, model version/mode and elapsed time.
+Vision results include analysisType=vision, provider, modelVersion, promptVersion, summary, dimensions, timing, warnings and findings. Each person includes description, equipment, requiredChecks and limitations. Equipment statuses: worn/carried/uncertain. Check statuses: observed/not_observed/uncertain. Legacy helmet/vest fields default to unknown; inventory screens ignore them. Vision detections is empty.
 
-All object IDs are UUIDs and scope-checked. Never fetch images from arbitrary submitted URLs. The private FastAPI `/health` and `/infer` require X-Inference-Key and are not exposed through the browser proxy.
+New analyses use promptVersion=safety-v2 and include machines (an empty array means no machinery identified). Each machine has machineId, name, identification (identified/likely/uncertain), description, entanglementRisk, hazards, precautions, recommendedWearables, limitations and questions. Hazard basis is visible/typical; precaution phase is before_use/operation/maintenance/emergency. Wearable category is ppe/clothing/safety_device and usage is recommended/task_dependent/avoid_during_operation, with purpose and condition. Duplicate machine IDs and unconditional glove recommendations for flagged entanglement risks fail validation. Historical results may lack machines. Machinery-only images remain valid with findings=[].
+
+Provider/key/quota failures are explicit. Configuration readiness does not verify provider access. No response contains the API key, inference secret or storage key. Prior environmental, simulator, incident, login and QR endpoints return 404.
